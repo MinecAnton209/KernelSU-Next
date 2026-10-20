@@ -21,6 +21,7 @@
 #include "compat/kernel_compat.h"
 
 #include "sulog/event.h"
+#include <linux/susfs_ksu.h>
 
 uint32_t ksuver_override = 0;
 
@@ -285,6 +286,15 @@ int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd,
 		// we write our confirmation on **
 		if (copy_to_user((void __user *)*arg, &reply, sizeof(reply)))
 			return 0;
+	}
+
+	if (magic2 == SUSFS_EXTENSION_MAGIC) {
+		// only root is allowed for this command
+		if (current_uid().val != 0)
+			return 0;
+		// the payload is a SUSFS struct, not a reply slot, so nothing is written back
+		susfs_ksu_dispatch(cmd, (void __user *)*arg);
+		return 0;
 	}
 
 	return 0;

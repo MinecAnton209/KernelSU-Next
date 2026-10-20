@@ -24,6 +24,7 @@
 #define GET_SULOG_DUMP_V2 10010
 #define CHANGE_KSUVER 10011
 #define CHANGE_SPOOF_UNAME 10012
+#define SUSFS_EXTENSION_MAGIC 10100
 
 struct ksu_become_daemon_cmd {
     __u8 token[65]; /* Input: daemon token (null-terminated) */
