@@ -25,6 +25,9 @@
 #include "hook/hook_manager.h"
 #include "feature/kernel_umount.h"
 #include "compat/kernel_compat.h"
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_def.h>
+#endif
 
 int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 {
@@ -64,6 +67,13 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 		ksu_set_task_tracepoint_flag(current);
 #endif
 	} else {
+#ifdef CONFIG_KSU_SUSFS
+		if (is_appuid(new_uid)) {
+			task_lock(current);
+			current->susfs_task_state |= TASK_STRUCT_NON_ROOT_USER_APP_PROC;
+			task_unlock(current);
+		}
+#endif
 #ifdef KSU_KPROBES_HOOK
 		ksu_clear_task_tracepoint_flag_if_needed(current);
 #endif
