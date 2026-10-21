@@ -25,6 +25,9 @@
 #include "supercall/supercall.h"
 #include "infra/symbol_resolver.h"
 #include "preinit/preinit.h"
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_ksu.h>
+#endif
 
 static int do_grant_root(void __user *arg)
 {
@@ -122,6 +125,9 @@ static int do_report_event(void __user *arg)
 			} else {
 				pr_info("post-fs-data triggered\n");
 				on_post_fs_data();
+#ifdef CONFIG_KSU_SUSFS
+				susfs_on_post_fs_data();
+#endif
 			}
 		}
 		break;

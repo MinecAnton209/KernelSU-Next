@@ -21,6 +21,9 @@
 #include "runtime/ksud_boot.h"
 #include "ksu.h"
 #include "compat/kernel_compat.h"
+#ifdef CONFIG_KSU_SUSFS
+#include <linux/susfs_ksu.h>
+#endif
 
 static bool ksu_kernel_umount_enabled = true;
 
@@ -120,6 +123,11 @@ static void umount_tw_func(struct callback_head *cb)
 int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 {
 	struct umount_tw *tw;
+
+	// SUSFS try_umount list is independent of KernelSU modules, so it runs first
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+	susfs_try_umount_on_spawn(new_uid);
+#endif
 
 	// if there isn't any module mounted, just ignore it!
 	if (!ksu_module_mounted) {
