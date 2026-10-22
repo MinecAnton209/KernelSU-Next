@@ -100,12 +100,27 @@ static void try_umount(const char *mnt, int flags)
 
 struct umount_tw {
 	struct callback_head cb;
+	uid_t uid;
+	bool susfs;
+	bool ksu;
 };
 
 static void umount_tw_func(struct callback_head *cb)
 {
 	struct umount_tw *tw = container_of(cb, struct umount_tw, cb);
-	const struct cred *saved = override_creds(ksu_cred);
+	const struct cred *saved;
+
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+	if (tw->susfs)
+		susfs_try_umount_on_spawn(tw->uid);
+#endif
+
+	if (!tw->ksu) {
+		kfree(tw);
+		return;
+	}
+
+	saved = override_creds(ksu_cred);
 
     struct mount_entry *entry;
     down_read(&mount_list_lock);
@@ -120,26 +135,19 @@ static void umount_tw_func(struct callback_head *cb)
 	kfree(tw);
 }
 
-int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
+static bool ksu_should_umount_on_spawn(uid_t new_uid)
 {
-	struct umount_tw *tw;
-
-	// SUSFS try_umount list is independent of KernelSU modules, so it runs first
-#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
-	susfs_try_umount_on_spawn(new_uid);
-#endif
-
 	// if there isn't any module mounted, just ignore it!
 	if (!ksu_module_mounted) {
-		return 0;
+		return false;
 	}
 
 	if (!ksu_kernel_umount_enabled) {
-		return 0;
+		return false;
 	}
 
 	if (!ksu_cred) {
-		return 0;
+		return false;
 	}
 
 	// There are 6 scenarios:
@@ -150,33 +158,52 @@ int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
 	// 5. Isolated process forked from app zygote: appuid -> isolated_process (already handled by 3)
 	// 6. Isolated process forked from webview zygote (already handled by 4)
 	if (!is_appuid(new_uid) && new_uid != WEBVIEW_ZYGOTE_UID && !is_isolated_process(new_uid)) {
-		return 0;
+		return false;
 	}
 
 	if (!ksu_uid_should_umount(new_uid) && !is_isolated_process(new_uid)) {
-		return 0;
+		return false;
 	}
 
 	// check old process's selinux context, if it is not zygote, ignore it!
 	// because some su apps may setuid to untrusted_app but they are in global mount namespace
 	// when we umount for such process, that is a disaster!
 	// also handle case 4 and 5
-	bool is_zygote_child = is_zygote(current_cred());
-	if (!is_zygote_child) {
+	if (!is_zygote(current_cred())) {
 		pr_info("handle umount ignore non zygote child: %d\n", current->pid);
-		return 0;
+		return false;
 	}
-	// umount the target mnt
-	pr_info("handle umount for uid: %d, pid: %d\n", new_uid, current->pid);
+	return true;
+}
+
+int ksu_handle_umount(uid_t old_uid, uid_t new_uid)
+{
+	struct umount_tw *tw;
+	bool susfs = false;
+	bool ksu = ksu_should_umount_on_spawn(new_uid);
+
+	// SUSFS try_umount list is independent of KernelSU modules.
+	// This hook is atomic, so both umounts are deferred to task_work.
+#ifdef CONFIG_KSU_SUSFS_TRY_UMOUNT
+	susfs = susfs_should_try_umount_on_spawn(new_uid);
+#endif
+
+	if (!susfs && !ksu)
+		return 0;
+
+	if (ksu)
+		pr_info("handle umount for uid: %d, pid: %d\n", new_uid, current->pid);
 
 	tw = kzalloc(sizeof(*tw), GFP_ATOMIC);
 	if (!tw)
 		return 0;
 
 	tw->cb.func = umount_tw_func;
+	tw->uid = new_uid;
+	tw->susfs = susfs;
+	tw->ksu = ksu;
 
-	int err = task_work_add(current, &tw->cb, TWA_RESUME);
-	if (err) {
+	if (task_work_add(current, &tw->cb, TWA_RESUME)) {
 		kfree(tw);
 		pr_warn("unmount add task_work failed\n");
 	}
